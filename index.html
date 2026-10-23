@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Caw Collector</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=VT323&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="hud">
+    <h1 class="title"><i class="px" style="--i:2"></i> Caw Collector</h1>
+    <button class="chip" data-info="coins"><i class="px" style="--i:0"></i><span id="hud-coins">0</span></button>
+    <button class="chip" data-info="food"><i class="px" style="--i:1"></i><span id="hud-food">0/0</span></button>
+    <button class="chip" data-info="crows"><i class="px" style="--i:2"></i><span id="hud-crows">0/0</span></button>
+    <button class="chip chip-bar" data-info="attract">
+      <i class="px" style="--i:3"></i>
+      <div class="bar"><div class="bar-fill" id="hud-attract"></div></div>
+    </button>
+  </header>
+
+  <main class="layout">
+    <section class="stage" id="stage">
+      <canvas id="scene"></canvas>
+      <div class="debug" id="debug" hidden>
+        <div class="debug-head"><b>Debug tools</b><button class="btn-ghost" id="close-debug">Close</button></div>
+        <div class="debug-body" id="debug-body"></div>
+      </div>
+      <div class="hint">
+        <b>Grab</b> food from the sack and throw it · <b>Click</b> a crow to pet it · <b>Drag</b> gifts into the gift box
+      </div>
+    </section>
+
+    <aside class="panel">
+      <h2>Flock</h2>
+      <ul class="crow-list" id="crow-list"></ul>
+      <div class="crow-card" id="crow-card" hidden></div>
+      <button class="btn-primary" id="open-tree"><i class="px" style="--i:5"></i> Upgrades <span class="badge" id="tree-badge" hidden>!</span></button>
+      <button class="btn-ghost" id="open-stats">Stats</button>
+      <button class="btn-ghost" id="open-guide">Field guide</button>
+      <button class="btn-ghost" id="reset">Reset save</button>
+      <button class="btn-ghost" id="open-debug" title="Shortcut: ` (backtick)">Debug</button>
+    </aside>
+  </main>
+
+  <div class="overlay" id="tree-overlay" hidden>
+    <div class="modal">
+      <div class="modal-head">
+        <h2>Upgrades</h2>
+        <div class="chip"><i class="px" style="--i:0"></i><span id="tree-coins">0</span></div>
+        <button class="btn-ghost" id="close-tree">Close</button>
+      </div>
+      <div class="tree-scroll">
+        <div class="tree" id="tree"></div>
+      </div>
+      <div class="detail" id="detail">Select an upgrade.</div>
+    </div>
+  </div>
+
+  <div class="overlay" id="stats-overlay" hidden>
+    <div class="modal">
+      <div class="modal-head">
+        <h2>Stats</h2>
+        <button class="btn-ghost" id="close-stats">Close</button>
+      </div>
+      <div class="stats-scroll">
+        <div class="tiles" id="stat-tiles"></div>
+        <div class="charts">
+          <section class="chart"><h3>Shinies earned per minute <span>last 30 minutes</span></h3><canvas class="chart-cv" id="ch-income"></canvas></section>
+          <section class="chart"><h3>Gifts delivered by rarity</h3><canvas class="chart-cv" id="ch-tiers"></canvas></section>
+          <section class="chart"><h3>Bond with your flock <span>bar = trust, red = grudge</span></h3><canvas class="chart-cv" id="ch-trust"></canvas></section>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="pop" id="chart-tip" hidden style="pointer-events:none; width:auto; max-width:20rem; padding:.4rem .7rem"></div>
+
+  <div class="overlay" id="guide-overlay" hidden>
+    <div class="modal">
+      <div class="modal-head">
+        <h2>Field guide</h2>
+        <div class="chip"><span id="guide-count">0/0 met</span></div>
+        <button class="btn-ghost" id="close-guide">Close</button>
+      </div>
+      <div class="guide-scroll"><div class="guide-grid" id="guide-grid"></div></div>
+    </div>
+  </div>
+
+  <div class="pop" id="info-pop" hidden></div>
+
+  <script src="game.js"></script>
+</body>
+</html>
