@@ -26,16 +26,16 @@ const CFG = {
   tierEvery: 12,      // trust needed per rarity tier unlocked (trust 24 -> tier 2, 60 -> tier 5)
   tierChanceBase: 0.25, // chance to roll up one more tier at trust 0 ...
   tierChanceTrust: 0.20, // ... plus this much more at trust 100 (so friends bring rarer things)
-  shyWalk: 130,      // px: at trust 0 a crow backs away when the cursor is this close...
-  shyFly: 55,        // px: ...and flies off when it gets this close. Both shrink linearly as trust grows
+  foodSight: 420,    // px: how far a crow notices food from (it keeps re-checking while it walks)
+  shyWalk: 260,      // px: at trust 0 a crow backs away when the cursor is this close...
+  shyFly: 110,       // px: ...and flies off when it gets this close. Both shrink slowly and evenly as trust grows
   scareGrudge: 4,    // grudge a crow gains each time you scare it off (x its temper)
   grudgeDecay: 0.03, // grudge fades by this per second
   grudgeWarn: 70,    // a crow tells you it is fed up at this much grudge
   banAt: 100,        // at this grudge a crow leaves for good...
   minRoster: 4,      // ...but the game always keeps at least this many crows available
-  startTrust: 10,    // trust a brand-new crow arrives with (10 = level 1, Curious)
-  shyEnd: 25,        // trust at which a crow no longer avoids the cursor at all
-  handTrust: 25,     // trust at which a crow will eat food straight from your hand
+  startTrust: 14,    // trust a brand-new crow arrives with (10 = level 1, Curious)
+  shyEnd: 30,        // trust at which a crow no longer avoids the cursor at all (it can be touched a bit before that)
   grabPad: 26,       // px added around loose food/gifts when picking them up (bigger = easier to grab)
   sackReach: 54,     // px: how close a click must be to the sack centre to pop food
   pressT: 0.12,      // seconds the hand holds the crow down on each pet (the squish is a quick spring, so spam clicks just keep pressing)
@@ -43,7 +43,7 @@ const CFG = {
   petReach: 44,      // px: a crow lets you touch it once its avoid range is smaller than this
   maxItems: 60, maxFood: 60,
 };
-// Better food unlocks with Tasty Treats (every 2 levels) and is worth more trust. spr = items.png cell, ui = ui.png icon.
+// Each better food is its own upgrade box in the tree (food1..food4) and is worth more meal points and trust. spr = items.png cell, ui = ui.png icon.
 const FOOD_TYPES = [ // pts = how many "meal points" one piece counts for on the way to a gift trip
   { n: 'Hazelnuts', e: '🌰', spr: 7, ui: 14, mult: 1,   q: 0, pts: 1 },
   { n: 'Peanuts',   e: '🥜', spr: 8, ui: 15, mult: 1.3, q: 2, pts: 2 },
@@ -55,7 +55,7 @@ const ITEMS = [
   { e: '🔩', n: 'Bolt', v: 3 }, { e: '🥄', n: 'Spoon', v: 6 }, { e: '🔑', n: 'Key', v: 12 },
   { e: '🪙', n: 'Coin', v: 20 }, { e: '💍', n: 'Ring', v: 50 }, { e: '💎', n: 'Gem', v: 120 }, { e: '👑', n: 'Crown', v: 300 },
 ];
-const LEVELS = [{ min: 0, n: 'Wary', col: '#c8c8d0' }, { min: 10, n: 'Curious', col: '#ffe9a8' }, { min: 25, n: 'Friendly', col: '#ffb3d1' }, { min: 60, n: 'Bonded', col: '#ffd34d' }];
+const LEVELS = [{ min: 0, n: 'Wary', col: '#c8c8d0' }, { min: 12, n: 'Curious', col: '#ffe9a8' }, { min: 40, n: 'Friendly', col: '#ffb3d1' }, { min: 70, n: 'Bonded', col: '#ffd34d' }];
 const levelIdx = t => { let i = 0; LEVELS.forEach((l, j) => { if (t >= l.min) i = j; }); return i; };
 /* ---- The roster: every crow is a little person (size = pixel scale: 3 tiny ... 5 huge, speed = how fast it walks and flies). pal = recolour of the 3-colour sprite (body / highlight / eye), size = pixel scale.
    Traits: shy (x comfort range), belly (pieces eaten before it is full), gen (gift value), temper (grudge speed), warm (trust speed). ---- */
@@ -88,49 +88,65 @@ const PIX = '"VT323", monospace';
 const ico = (i, cls = '') => `<i class="px ${cls}" style="--i:${i}"></i>`; // icon from images/ui.png
 const FONT = '"Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif';
 
-/* Upgrade tree: col/row place the node on the grid, `parent` must be owned (level>=1) to unlock. */
-const UPGRADES = [
-  { id: 'quality',   ico: 6, n: 'Tasty Treats',   d: 'Better food every 2 levels (worth more meal points and trust), +10% trust each', col: 2, row: 2, parent: null,      base: 3, g: 2.3, max: 10 },
-  { id: 'restock',   ico: 8, n: 'Restock',        d: 'The sack refills faster: 9s, 7s, 5.5s, 4.5s ... per charge', col: 1, row: 3, parent: 'quality', base: 4, g: 2.2, max: 6 },
-  { id: 'bag',       ico: 7, n: 'Bigger Bag',     d: '+2 food charges in the sack', col: 1, row: 2, parent: 'quality', base: 6, g: 2.0, max: 10 },
-  { id: 'handful',   ico: 7, n: 'Bigger Handful', d: 'Each pop throws one more piece for the same charge (never more than your crow slots)', col: 0, row: 2, parent: 'bag', base: 30, g: 2.8, max: 4, capFn: () => D.maxCrows - 1 },
-  { id: 'gentle',    ico: 9, n: 'Gentle Hands',   d: '+40% trust from each pet', col: 2, row: 1, parent: 'quality', base: 12, g: 2.2, max: 10 },
-  { id: 'flock',     ico: 10, n: 'Nesting Spot',   d: '+1 max crow (you start with one)', col: 3, row: 2, parent: 'quality', base: 6, g: 3.2, max: 8 },
-  { id: 'wings',     ico: 11, n: 'Strong Wings',   d: 'Shorter trips; one less meal point needed per 2 levels', col: 4, row: 1, parent: 'flock',   base: 40, g: 2.4, max: 10 },
-  { id: 'autofeed',    ico: 19, n: 'Auto Feeder',    d: 'The sack pops out food by itself every 5s (faster each level)', col: 2, row: 3, parent: 'quality', base: 4, g: 2.6, max: 5 },
-  { id: 'autodeposit', ico: 20, n: 'Auto Deposit',   d: 'Crows drop gifts into the gift box themselves: 50% / 75% / 100%', col: 3, row: 3, parent: 'quality', base: 5, g: 3.0, max: 3 },
-  { id: 'appraisal', ico: 12, n: 'Appraisal Eye',  d: '+25% value, rarer finds',   col: 4, row: 0, parent: 'wings',   base: 60, g: 2.6, max: 10 },
+/* Upgrade tree. Every upgrade is a CHAIN of single-purchase boxes (Bigger Bag I, II, III ...). Chains run in straight lines: up, down or sideways.
+   pos = [col, row] of each box in order. A chain's first box hangs off `parent` (a box id); the next boxes need the one before. */
+const ROMAN = ['', 'I', 'II', 'III', 'IV', 'V', 'VI'];
+const CHAINS = [
+  { id: 'quality', n: 'Tasty Treats', ico: 14, d: 'Every piece you feed is worth +25% more trust.', base: 3, g: 2.3, parent: null, pos: [[3, 5], [3, 6], [3, 7], [3, 8]] },
+  { id: 'food', foods: true, costs: [10, 45, 150, 450], parent: 'quality1', pos: [[3, 4], [3, 3], [3, 2], [3, 1]] },
+  { id: 'restock', n: 'Restock', ico: 8, d: 'The sack refills faster: 9s, 7.5s, 6.3s, 5.4s, 4.7s, 4.2s per charge.', base: 4, g: 2.2, parent: 'quality1', pos: [[2, 5], [1, 5], [0, 5], [0, 4], [0, 3]] },
+  { id: 'bag', n: 'Bigger Bag', ico: 7, d: '+4 food charges in the sack.', base: 6, g: 2.0, parent: 'restock1', pos: [[2, 4], [2, 3], [2, 2]] },
+  { id: 'handful', n: 'Bigger Handful', ico: 7, d: 'Each pop throws one more piece for the same charge (never more than your crow slots).', base: 30, g: 2.8, parent: 'restock2', needCrows: true, pos: [[1, 4], [1, 3], [1, 2], [1, 1]] },
+  { id: 'gentle', n: 'Gentle Hands', ico: 9, d: '+50% trust from each pet.', base: 12, g: 2.2, parent: 'quality4', pos: [[2, 8], [1, 8], [0, 8]] },
+  { id: 'flock', n: 'Nesting Spot', ico: 10, d: '+1 crow slot (you start with one) and a new crow is drawn in.', base: 6, g: 3.2, parent: 'quality1', pos: [[4, 5], [5, 5], [6, 5], [6, 4], [6, 3]] },
+  { id: 'autodeposit', n: 'Auto Deposit', ico: 20, d: 'Crows drop gifts into the gift box themselves: 50%, 75%, then 100% of the time.', base: 5, g: 3.0, parent: 'flock1', pos: [[4, 4], [4, 3], [4, 2]] },
+  { id: 'autofeed', n: 'Auto Feeder', ico: 19, d: 'The sack pops out food by itself every 5s, a bit faster with each box.', base: 4, g: 2.6, parent: 'flock1', pos: [[4, 6], [4, 7], [4, 8], [4, 9]] },
+  { id: 'wings', n: 'Strong Wings', ico: 11, d: 'Gift trips are 15% shorter, and every 2 boxes a crow needs one less meal point.', base: 40, g: 2.4, parent: 'flock2', pos: [[5, 4], [5, 3], [5, 2], [5, 1]] },
+  { id: 'appraisal', n: 'Appraisal Eye', ico: 12, d: 'Gifts are worth 30% more and rarer finds show up more often.', base: 60, g: 2.6, parent: 'flock2', pos: [[5, 6], [5, 7], [5, 8], [5, 9]] },
 ];
-const upMax = u => u.capFn ? Math.max(0, Math.min(u.max, u.capFn())) : u.max; // some upgrades are capped by something else (e.g. crow slots)
+const CHAIN_LEN = Object.fromEntries(CHAINS.map(c => [c.id, c.pos.length]));
+const UPGRADES = [];
+for (const c of CHAINS) c.pos.forEach(([col, row], i) => {
+  const f = c.foods ? FOOD_TYPES[i + 1] : null; // the food chain takes its names and icons from the foods themselves
+  UPGRADES.push({
+    id: c.id + (i + 1), chain: c.id, idx: i + 1, col, row, parent: i ? c.id + i : c.parent,
+    ico: f ? f.ui : c.ico, n: f ? f.n : c.n + (c.pos.length > 1 ? ' ' + ROMAN[i + 1] : ''),
+    d: f ? `Unlocks ${f.n}: each piece counts for ${f.pts} meal points and ${f.mult}x trust. The sack serves it from now on.` : c.d,
+    cost: c.costs ? c.costs[i] : Math.floor(c.base * Math.pow(c.g, i)), need: c.needCrows ? () => D.maxCrows > i + 1 : null, needText: 'Needs more crow slots',
+  });
+});
 const UP = Object.fromEntries(UPGRADES.map(u => [u.id, u]));
 
 /* ================= STATE ================= */
 const SAVE_KEY = 'cawCollector.v1';
-const fresh = () => ({ earned: 0, tiers: {}, mins: {}, playTime: 0, pieces: 0, pets: 0, scares: 0, bestGift: null, coins: 0, food: CFG.startFood, attract: 0, trips: 0, delivered: 0, up: {}, crows: [], roster: {} });
+const fresh = () => ({ tips: {}, earned: 0, tiers: {}, mins: {}, playTime: 0, pieces: 0, pets: 0, scares: 0, bestGift: null, coins: 0, food: CFG.startFood, attract: 0, trips: 0, delivered: 0, up: {}, crows: [], roster: {} });
 let S = fresh();
 try { Object.assign(S, JSON.parse(localStorage.getItem(SAVE_KEY) || '{}')); } catch (e) {}
-S.roster = S.roster || {}; S.tiers = S.tiers || {}; S.mins = S.mins || {}; S.playTime = S.playTime || 0; S.earned = S.earned || 0; S.pieces = S.pieces || 0; S.pets = S.pets || 0; S.scares = S.scares || 0;
+S.tips = S.tips || {}; S.up = S.up || {}; S.roster = S.roster || {};
+for (let i = 1; i <= 4; i++) if ((S.up.quality || 0) >= 2 * i && !S.up['food' + i]) S.up['food' + i] = 1; // very old saves: Tasty Treats levels unlocked the better foods S.tiers = S.tiers || {}; S.mins = S.mins || {}; S.playTime = S.playTime || 0; S.earned = S.earned || 0; S.pieces = S.pieces || 0; S.pets = S.pets || 0; S.scares = S.scares || 0;
 const R = id => (S.roster[id] = S.roster[id] || {}); // per-crow memory that outlives a visit: seen, banned, best trust
 
-const lvl = id => S.up[id] || 0;
+const owned = u => (S.up[u.id] || 0) > 0;
+const lvl = id => CHAIN_LEN[id] ? Array.from({ length: CHAIN_LEN[id] }, (_, k) => S.up[id + (k + 1)] ? 1 : 0).reduce((a, b) => a + b, 0) : (S.up[id] || 0); // chain id -> boxes owned
+for (const id of Object.keys(CHAIN_LEN)) { const old = S.up[id]; if (typeof old === 'number') { for (let k = 1; k <= Math.min(CHAIN_LEN[id], old); k++) S.up[id + k] = 1; delete S.up[id]; } } // old saves had one multi-level upgrade per chain
 const D = {
-  get foodMax() { return CFG.startFood + 2 * lvl('bag'); },
+  get foodMax() { return CFG.startFood + 4 * lvl('bag'); },
   get refillSec() { return CFG.refillSecs[Math.min(lvl('restock'), CFG.refillSecs.length - 1)]; },
   get regen() { return 1 / D.refillSec; },
   get popSize() { return Math.min(1 + lvl('handful'), D.maxCrows); }, // pieces per pop: one charge, never more than your crow slots
   get maxCrows() { return 1 + lvl('flock'); },
-  get foodTier() { let t = 0; FOOD_TYPES.forEach((f, i) => { if (lvl('quality') >= f.q) t = i; }); return t; },
+  get foodTier() { let t = 0; for (let i = 1; i < FOOD_TYPES.length; i++) if (S.up['food' + i]) t = i; return t; }, // best food you have bought
   get petRate() { return 1.2 * (1 + 0.4 * lvl('gentle')); },
   get autoFeedEvery() { return CFG.autoFeedSec / (1 + 0.25 * (lvl('autofeed') - 1)); },
   get autoDepositChance() { return [0, 0.5, 0.75, 1][Math.min(3, lvl('autodeposit'))]; },
   get mealsNeeded() { return Math.max(3, Math.min(CFG.mealsCap, CFG.mealsBase + Math.floor((S.trips || 0) / CFG.mealsStep)) - Math.floor(lvl('wings') / 2)); },
-  get valueMul() { return 1 + 0.25 * lvl('appraisal'); },
-  get luck() { return 0.03 * lvl('appraisal'); },
+  get valueMul() { return 1 + 0.3 * lvl('appraisal'); },
+  get luck() { return 0.04 * lvl('appraisal'); },
 };
-const foodTrustOf = tier => 0.7 * FOOD_TYPES[tier].mult * (1 + 0.1 * lvl('quality')); // trust one meal gives
-const upCost = u => Math.floor(u.base * Math.pow(u.g, lvl(u.id)));
-const unlocked = u => !u.parent || lvl(u.parent) > 0;
-const save = () => { try { localStorage.setItem(SAVE_KEY, JSON.stringify({ coins: S.coins, food: S.food, attract: S.attract, trips: S.trips, delivered: S.delivered, up: S.up, roster: S.roster, earned: S.earned, tiers: S.tiers, mins: S.mins, playTime: S.playTime, pieces: S.pieces, pets: S.pets, scares: S.scares, bestGift: S.bestGift, crows: S.crows.map(c => ({ id: c.id, trust: c.trust, meals: c.meals, grudge: c.grudge })) })); } catch (e) {} };
+const foodTrustOf = tier => 0.7 * FOOD_TYPES[tier].mult * (1 + 0.25 * lvl('quality')); // trust one meal gives
+const unlocked = u => !u.parent || !!S.up[u.parent];
+const canBuy = u => unlocked(u) && !owned(u) && S.coins >= u.cost && (!u.need || u.need());
+const save = () => { try { localStorage.setItem(SAVE_KEY, JSON.stringify({ coins: S.coins, food: S.food, attract: S.attract, trips: S.trips, delivered: S.delivered, up: S.up, tips: S.tips, roster: S.roster, earned: S.earned, tiers: S.tiers, mins: S.mins, playTime: S.playTime, pieces: S.pieces, pets: S.pets, scares: S.scares, bestGift: S.bestGift, crows: S.crows.map(c => ({ id: c.id, trust: c.trust, meals: c.meals, grudge: c.grudge })) })); } catch (e) {} };
 
 /* ================= HELPERS ================= */
 const $ = s => document.querySelector(s);
@@ -179,8 +195,12 @@ function spawnBody(o) {
   if (same.length > cap) bodies.splice(bodies.indexOf(same[0]), 1);
   return b;
 }
-function floater(x, y, text, size = 18, spr = null) { floaters.push({ x, y, text, size, spr, t: 0, life: 1.1 }); }
+function floater(x, y, text, size = 18, spr = null, dbgOnly = false) { if (dbgOnly && !DBG.info) return; floaters.push({ x, y, text, size, spr, t: 0, life: 1.1 }); }
 const heart = (x, y) => floater(x, y, '', 0, HEART_SPR);
+const particles = []; // little pixel sparkles: a soft "I like this, but I could not be fonder" burst when a content crow is petted
+function sparkle(x, y, n = 7) {
+  for (let i = 0; i < n; i++) { const a = rand(-Math.PI * 0.95, -Math.PI * 0.05), sp = rand(50, 120); particles.push({ x: x + rand(-14, 14), y: y + rand(-6, 6), vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, t: 0, life: rand(0.55, 0.9), sz: Math.random() < 0.4 ? 5 : 3, col: ['#ffffff', '#bfe9ff', '#a6d8ff', '#fff3b0'][Math.floor(Math.random() * 4)] }); }
+}
 
 /* ---- Food sack (left) and gift crate (right). Positions are set in layoutObjects(). ---- */
 const SACK_SPR = 13, CRATE_SPR = 14, OBJ_SCALE = 4;
@@ -208,12 +228,12 @@ function popFood() { // pops D.popSize pieces out of the sack for ONE charge, up
 }
 function grabFromSack() { // the player can click as fast as they like; only the charges limit them
   if (S.food < 1) { BAG.shake = 0.25; floater(BAG.x, BAG.y - 78, 'empty!', 14); return; }
-  popFood(); floater(BAG.x, BAG.y - 82, 'pop!', 12);
+  popFood(); floater(BAG.x, BAG.y - 82, 'pop!', 12, null, true);
 }
 function drawWorldObjects() {
   if (!ready('items')) return;
   ctx.imageSmoothingEnabled = false; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  const label = (t, x, y, col = '#fff') => { ctx.font = `18px ${PIX}`; ctx.fillStyle = '#000'; ctx.fillText(t, x + 1, y + 1); ctx.fillStyle = col; ctx.fillText(t, x, y); };
+  const label = (t, x, y, col = '#fff') => { ctx.font = `23px ${PIX}`; ctx.fillStyle = '#000'; ctx.fillText(t, x + 1, y + 1); ctx.fillStyle = col; ctx.fillText(t, x, y); };
   // sack
   const sh = BAG.shake > 0 ? Math.sin(BAG.shake * 60) * 3 : 0, sz = 16 * OBJ_SCALE;
   ctx.fillStyle = 'rgba(0,0,0,0.25)'; ctx.beginPath(); ctx.ellipse(BAG.x, floorY + 12 - CFG.objectLift, 30, 6, 0, 0, 7); ctx.fill();
@@ -272,7 +292,7 @@ function pickArrival() { // who shows up next: random, not banned, not already h
   return cand[cand.length - 1];
 }
 function scare(c) { // you drove it off: it remembers. Enough of that and it stops visiting for good.
-  if (c.scareCd > 0) return; c.scareCd = 1.5; S.scares++;
+  if (c.scareCd > 0) return; c.scareCd = 1.5; S.scares++; showTipLater('scare', 1.3);
   c.grudge = Math.min(CFG.banAt, c.grudge + CFG.scareGrudge * c.def.temper);
   if (!c.warned && c.grudge >= CFG.grudgeWarn) { c.warned = true; floater(c.x, c.y - 96, `${c.name} is fed up!`, 18); }
   if (c.grudge >= CFG.banAt) {
@@ -301,23 +321,23 @@ function rollGift(c) {
 }
 function autoDeposit(c) { // Auto Deposit upgrade: the crow puts the gift in the box itself
   const g = c.gift; c.gift = null; c.face = c.x < CRATE.x ? -1 : 1;
-  floater(c.x, c.y - 56, 'in the box!', 14); creditGift(g.value, g.tier);
+  floater(c.x, c.y - 56, 'in the box!', 14, null, true); creditGift(g.value, g.tier);
 }
 function dropGift(c) {
-  const g = c.gift; c.gift = null;
+  const g = c.gift; c.gift = null; showTipLater('gift', 0.8);
   spawnBody({ kind: 'item', e: g.e, spr: g.tier, tier: g.tier, value: g.value, x: c.x, y: c.y - 30, vx: rand(-80, 80), vy: -250, r: 14, size: 32 });
-  floater(c.x, c.y - 56, 'caw!', 16);
+  floater(c.x, c.y - 56, 'caw!', 16, null, true);
 }
 
-const handReach = (c, b) => b.grab && c.trust >= CFG.handTrust && b.y > floorY - 120; // held food a trusting crow can reach
+const handReach = (c, b) => b.grab && walkRange(c) < CFG.petReach && b.y > floorY - 120; // held food a crow will take: only once it lets the cursor come close
 function nearestFood(c) {
   if (c.full >= c.def.belly) return null;
   let best = null, bd = 1e9;
   for (const b of bodies) {
-    if (b.kind === 'food' && handReach(c, b)) { const d = Math.abs(b.x - c.x); if (d < bd) { bd = d; best = b; } continue; }
+    if (b.kind === 'food' && handReach(c, b)) { const d = Math.abs(b.x - c.x); if (d < bd && d <= CFG.foodSight) { bd = d; best = b; } continue; }
     if (b.kind !== 'food' || b.grab || Math.abs(b.vy) > 200 || b.y < floorY - 40) continue;
     const d = Math.abs(b.x - c.x);
-    if (d < bd) { bd = d; best = b; }
+    if (d < bd && d <= CFG.foodSight) { bd = d; best = b; }
   }
   return best;
 }
@@ -326,9 +346,12 @@ function petCrow(c) { // a click on a crow that is comfortable enough to be touc
   if (c.petGap > 0) return;
   c.petGap = 0.05; c.holdT = 1.2; c.happy = 0.7; c.pressT = CFG.pressT; S.pets = (S.pets || 0) + 1;
   if (c.petBank >= 1) {
-    c.petBank -= 1; c.trust = Math.min(100, c.trust + CFG.petGain * (1 + 0.4 * lvl('gentle')) * trustMul(c));
+    c.petBank -= 1; c.trust = Math.min(100, c.trust + CFG.petGain * (1 + 0.5 * lvl('gentle')) * trustMul(c));
     for (let i = 0; i < 3; i++) heart(c.x + rand(-26, 26), c.y - rand(40, 70) * (c.def.size / 4));
-  } else if (c.petMsg <= 0) { floater(c.x, c.y - 70 * (c.def.size / 4), 'content~', 14); c.petMsg = 2.5; } // happy, but no fonder
+  } else { // happy, but no fonder: sparkles instead of hearts
+    sparkle(c.x, c.y - 52 * (c.def.size / 4), 8);
+    if (c.petMsg <= 0) { floater(c.x, c.y - 70 * (c.def.size / 4), 'content~', 14, null, true); c.petMsg = 2.5; }
+  }
 }
 function levelUp(c, idx) {
   floater(c.x, c.y - 96, `${LEVELS[idx].n}!`, 22);
@@ -337,6 +360,7 @@ function levelUp(c, idx) {
 }
 const shyK = c => Math.max(0, 1 - c.trust / CFG.shyEnd); // 1 = very shy ... 0 = trusts you
 const grudgeK = c => clamp(c.grudge, 0, 100) / 150; // a crow with a grudge keeps its distance even if it likes you
+const touchTrust = d => Math.ceil(CFG.shyEnd * (1 - CFG.petReach / (CFG.shyWalk * d.shy))); // trust at which this kind of crow lets you come close (petting and hand feeding)
 const walkRange = c => CFG.shyWalk * (shyK(c) * c.def.shy + grudgeK(c)), flyRange = c => CFG.shyFly * (shyK(c) * c.def.shy + grudgeK(c));
 const trustMul = c => c.def.warm * (1 - clamp(c.grudge, 0, 100) / 150); // how quickly it warms up to you
 function updateCrow(c, dt) {
@@ -346,7 +370,8 @@ function updateCrow(c, dt) {
 
   c.scared = Math.max(0, (c.scared || 0) - dt);
   const li = levelIdx(c.trust); if (li > c.lvl) levelUp(c, li); c.lvl = li;
-  const wr = walkRange(c), shy = wr >= CFG.petReach; // a crow that can be touched (range under the pet reach) lets the cursor come all the way
+  const wr = walkRange(c), shy = wr >= CFG.petReach;
+  if (!shy && !S.tips.touch && c.state === 'idle') showTipLater('touch', 1.0); // a crow that can be touched (range under the pet reach) lets the cursor come all the way
   // true if stepping to nx would take a shy crow inside the cursor's range (it waits at the edge instead)
   const blocked = nx => shy && P.over && Math.hypot(P.x - nx, P.y - c.y) < wr + 6 && Math.hypot(P.x - nx, P.y - c.y) < pd;
   if (shy && grounded && P.over && c.state !== 'eat') { // back away first, fly off if the cursor keeps coming; the closer to trust, the smaller the range
@@ -378,9 +403,12 @@ function updateCrow(c, dt) {
     }
     case 'seek': {
       c.y = floorY - 6;
-      const f = c.target;
       if (c.holdT > 0) break; // stay put while being petted
-      if (!f || !bodies.includes(f) || (f.grab && !handReach(c, f))) { c.state = 'idle'; break; }
+      const best = nearestFood(c); // keep scanning while walking: food that landed closer, or a target someone else ate, changes the plan
+      let f = c.target;
+      const alive = f && bodies.includes(f) && !(f.grab && !handReach(c, f));
+      if (!alive) { if (best) { c.target = f = best; } else { c.state = 'idle'; break; } }
+      else if (best && best !== f && Math.abs(best.x - c.x) + 24 < Math.abs(f.x - c.x)) { c.target = f = best; } // 24px of hysteresis so it does not dither between two similar pieces
       const dx = f.x - c.x, nx = c.x + Math.sign(dx) * 120 * c.def.speed * dt;
       if (Math.abs(dx) >= (f.grab ? 28 : 14) && blocked(nx)) break; // food is inside the cursor's range: wait at the edge, no turning
       c.face = dx > 0 ? -1 : 1;
@@ -389,7 +417,7 @@ function updateCrow(c, dt) {
         bodies.splice(bodies.indexOf(f), 1);
         const fromHand = f === P.grab; if (fromHand) P.grab = null;
         c.trust = Math.min(100, c.trust + foodTrustOf(f.tier ?? 0) * (fromHand ? 1.5 : 1) * trustMul(c)); c.full += 1; c.meals += FOOD_TYPES[f.tier ?? 0].pts; S.pieces++;
-        if (fromHand) { floater(c.x, c.y - 70, 'from your hand!', 14); c.happy = 0.8; heart(c.x - 14, c.y - 50); }
+        if (fromHand) { floater(c.x, c.y - 70, 'from your hand!', 14, null, true); c.happy = 0.8; heart(c.x - 14, c.y - 50); }
         heart(c.x, c.y - 40);
         c.state = 'eat'; c.t = 0.7;
       } else { c.x = nx; c.y -= Math.abs(Math.sin(c.clock * 11)) * 14; } // hurried hop
@@ -398,14 +426,14 @@ function updateCrow(c, dt) {
     case 'eat':
       c.y = floorY - 6;
       if (c.t <= 0) {
-        if (c.meals >= D.mealsNeeded) { c.meals = 0; S.trips = (S.trips || 0) + 1; floater(c.x, c.y - 56, 'off to find something!', 14); leave(c, true); }
+        if (c.meals >= D.mealsNeeded) { c.meals = 0; S.trips = (S.trips || 0) + 1; floater(c.x, c.y - 56, 'off to find something!', 14, null, true); leave(c, true); }
         else { c.state = 'idle'; c.t = rand(0.3, 1); }
       }
       break;
     case 'flee':
       c.fleeT += dt; c.x += c.vx * dt; c.y += c.vy * dt; c.face = c.vx > 0 ? -1 : 1;
       if (c.banned && (c.y < -60 || c.x < -80 || c.x > W + 80)) { c.gone = true; break; }
-      if (c.y < -60 || c.x < -80 || c.x > W + 80) { c.state = 'away'; c.t = c.trip ? rand(...CFG.tripTime) / (1 + 0.1 * lvl('wings')) / c.def.speed : rand(5, 9); }
+      if (c.y < -60 || c.x < -80 || c.x > W + 80) { c.state = 'away'; c.t = c.trip ? rand(...CFG.tripTime) / (1 + 0.15 * lvl('wings')) / c.def.speed : rand(5, 9); }
       break;
     case 'away':
       if (c.t <= 0) {
@@ -460,7 +488,7 @@ function drawCrow(c) {
   const target = c.state === 'fly_in' ? clamp(Math.hypot(c.lx - c.x, c.ly - c.y) / 90, 0, 1) : c.state === 'flee' ? clamp(c.fleeT / 0.35, 0, 1) : 0;
   c.lift += (target - c.lift) * 0.5;
   ctx.fillStyle = 'rgba(0,0,0,0.25)'; // ground shadow
-  const hop = c.lift < 0.2 ? Math.max(0, floorY - 6 - c.y) : 0; // height of the current hop
+  const hop = c.lift < 0.2 ? clamp(floorY - 6 - c.y, 0, 36) : 0; // height of the current hop (clamped so the shadow can never go negative)
   ctx.beginPath(); ctx.ellipse(c.x, floorY + CFG.feetOffset - 1, (22 - 8 * c.lift) * (1 - hop / 40), 5 * (1 - hop / 60), 0, 0, 7); ctx.fill();
   const wr = walkRange(c); // comfort range: shows how close the cursor can come, shrinking as the crow trusts you
   if (wr >= CFG.petReach && (c === selCrow || (P.over && Math.hypot(P.x - c.x, P.y - c.y) < wr * 1.8))) {
@@ -486,15 +514,15 @@ function drawCrow(c) {
     const my = c.y - 112 * k + Math.sin(performance.now() / 180) * 3; ctx.fillStyle = '#000'; ctx.fillRect(c.x - 8, my - 1, 16, 4); ctx.fillRect(c.x - 5, my + 3, 10, 4); ctx.fillRect(c.x - 2, my + 7, 4, 3);
     ctx.fillStyle = '#ffcf5a'; ctx.fillRect(c.x - 6, my, 12, 2); ctx.fillRect(c.x - 4, my + 2, 8, 3); ctx.fillRect(c.x - 1, my + 5, 2, 3);
   }
-  if (ready('items')) { // three hearts: each fills from the bottom as the crow warms up to the next level
+  if (ready('items') && (DBG.info || c === selCrow)) { // three hearts: each fills from the bottom as the crow warms up to the next level (hidden unless selected or detailed feedback is on)
     for (let i = 0; i < 3; i++) {
-      const lo = LEVELS[i].min, hi = LEVELS[i + 1].min, p = clamp((c.trust - lo) / (hi - lo), 0, 1), hx = c.x + (i - 1) * 28, hy = c.y - 76 * k, n = Math.ceil(6 * p);
+      const lo = LEVELS[i].min, hi = LEVELS[i + 1].min, p = clamp((c.trust - lo) / (hi - lo), 0, 1), hx = c.x + (i - 1) * 28, hy = c.y - 88 * k, n = Math.ceil(6 * p);
       ctx.globalAlpha = 0.3; ctx.drawImage(IMG.items, HEART_SPR * 16, 0, 16, 16, Math.round(hx - 24), Math.round(hy - 24), 48, 48);
       ctx.globalAlpha = 1; if (p >= 1) ctx.drawImage(IMG.items, HEART_SPR * 16, 0, 16, 16, Math.round(hx - 24), Math.round(hy - 24), 48, 48); else if (n > 0) ctx.drawImage(IMG.items, HEART_SPR * 16, 11 - n, 16, n, Math.round(hx - 24), Math.round(hy - 24 + (11 - n) * 3), 48, n * 3);
     }
   }
   const lv = LEVELS[levelIdx(c.trust)];
-  ctx.font = `18px ${PIX}`; ctx.fillStyle = '#000'; ctx.fillText(c.name, c.x + 1, c.y - 51 * k); ctx.fillStyle = lv.col; ctx.fillText(c.name, c.x, c.y - 52 * k);
+  ctx.font = `25px ${PIX}`; ctx.fillStyle = '#000'; ctx.fillText(c.name, c.x + 2, c.y - 51 * k + 1); ctx.fillStyle = lv.col; ctx.fillText(c.name, c.x, c.y - 52 * k);
   if (c.grudge >= 40) { const nw = ctx.measureText(c.name).width / 2 + 10; ctx.fillStyle = '#000'; ctx.fillText(c.grudge >= CFG.grudgeWarn ? '!!' : '!', c.x + nw + 1, c.y - 51 * k); ctx.fillStyle = '#e0566a'; ctx.fillText(c.grudge >= CFG.grudgeWarn ? '!!' : '!', c.x + nw, c.y - 52 * k); } // it is getting annoyed
 }
 
@@ -582,14 +610,16 @@ canvas.addEventListener('pointercancel', release);
 
 /* ================= UPGRADE TREE UI ================= */
 const treeEl = $('#tree'), detailEl = $('#detail'), overlay = $('#tree-overlay');
-let selected = 'quality';
+let selected = 'quality1';
 const CELL = () => parseFloat(getComputedStyle(treeEl).getPropertyValue('--cell')) || 6.5;
 const nodeEls = {}, lineEls = [];
 let lastDetail = '';
 detailEl.addEventListener('click', e => { if (e.target.closest('button')) buy(selected); });
 
 function buildTree() {
-  const cols = Math.max(...UPGRADES.map(u => u.col)) + 1, rows = Math.max(...UPGRADES.map(u => u.row)) + 1;
+  const minC = Math.min(...UPGRADES.map(u => u.col)), minR = Math.min(...UPGRADES.map(u => u.row)); // trim empty rows/columns around the tree
+  const cx = u => u.col - minC, cy = u => u.row - minR;
+  const cols = Math.max(...UPGRADES.map(cx)) + 1, rows = Math.max(...UPGRADES.map(cy)) + 1;
   treeEl.style.width = `calc(var(--cell) * ${cols})`; treeEl.style.height = `calc(var(--cell) * ${rows})`;
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
   svg.setAttribute('viewBox', `0 0 ${cols * 100} ${rows * 100}`); svg.setAttribute('preserveAspectRatio', 'none');
@@ -597,43 +627,46 @@ function buildTree() {
   for (const u of UPGRADES) {
     if (u.parent) {
       const p = UP[u.parent], l = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-      l.setAttribute('x1', p.col * 100 + 50); l.setAttribute('y1', p.row * 100 + 50);
-      l.setAttribute('x2', u.col * 100 + 50); l.setAttribute('y2', u.row * 100 + 50);
+      l.setAttribute('x1', cx(p) * 100 + 50); l.setAttribute('y1', cy(p) * 100 + 50);
+      l.setAttribute('x2', cx(u) * 100 + 50); l.setAttribute('y2', cy(u) * 100 + 50);
       svg.appendChild(l); lineEls.push([l, u]);
     }
     const n = document.createElement('button');
     n.className = 'node';
-    n.style.left = `calc(var(--cell) * ${u.col} + (var(--cell) - var(--node)) / 2)`;
-    n.style.top = `calc(var(--cell) * ${u.row} + (var(--cell) - var(--node)) / 2)`;
+    n.style.left = `calc(var(--cell) * ${cx(u)} + (var(--cell) - var(--node)) / 2)`;
+    n.style.top = `calc(var(--cell) * ${cy(u)} + (var(--cell) - var(--node)) / 2)`;
     n.innerHTML = `${ico(u.ico)}<span class="lv"></span>`;
     n.onclick = () => { selected = u.id; renderTree(); };
     treeEl.appendChild(n); nodeEls[u.id] = n;
   }
 }
 function buy(id) {
-  const u = UP[id], c = upCost(u);
-  if (!unlocked(u) || lvl(id) >= upMax(u) || S.coins < c) return;
-  S.coins -= c; S.up[id] = lvl(id) + 1;
-  if (id === 'autofeed') AUTO.t = Math.min(AUTO.t, D.autoFeedEvery);
-  if (id === 'flock') { S.attract = Math.max(S.attract, CFG.maxAttract / 2); spawnCd = 0; spawnT = 0; } // a new nesting spot draws the next crow right away
+  const u = UP[id]; if (!canBuy(u)) return;
+  S.coins -= u.cost; S.up[id] = 1;
+  if (u.chain === 'autofeed') AUTO.t = Math.min(AUTO.t, D.autoFeedEvery);
+  if (u.chain === 'flock') { S.attract = Math.max(S.attract, CFG.maxAttract / 2); spawnCd = 0; spawnT = 0; } // a new nesting spot draws the next crow right away
   save(); renderTree();
 }
 function renderTree() {
   for (const u of UPGRADES) {
-    const n = nodeEls[u.id], l = lvl(u.id), open = unlocked(u), can = open && l < upMax(u) && S.coins >= upCost(u);
-    n.className = 'node' + (!open ? ' locked' : '') + (can ? ' can' : '') + (l > 0 ? ' owned' : '') + (l >= u.max ? ' maxed' : '') + (selected === u.id ? ' sel' : '');
-    n.querySelector('.lv').textContent = open ? `${l}/${u.capFn ? upMax(u) : u.max}` : '';
+    const n = nodeEls[u.id], have = owned(u), open = unlocked(u), can = canBuy(u);
+    n.className = 'node' + (!open ? ' locked' : '') + (can ? ' can' : '') + (have ? ' owned' : '') + (selected === u.id ? ' sel' : '');
+    n.querySelector('.lv').textContent = !open || have ? '' : u.cost; // the price sits on the box until you own it
     const pic = n.querySelector('.px'); pic.style.setProperty('--i', open ? u.ico : 4); pic.classList.toggle('lock', !open);
   }
-  for (const [l, u] of lineEls) l.classList.toggle('on', lvl(u.id) > 0);
-  const u = UP[selected], l = lvl(u.id), maxed = l >= u.max, open = unlocked(u), capped = !maxed && l >= upMax(u);
+  for (const [l, u] of lineEls) l.classList.toggle('on', owned(u));
+  const u = UP[selected], have = owned(u), open = unlocked(u), blocked = u.need && !u.need(), count = lvl(u.chain);
   const html = `${ico(u.ico)}
-    <div class="info"><b>${u.n} · Lv ${l}/${u.max}</b><span>${u.d}${open ? '' : ` — requires ${UP[u.parent].n}`}</span></div>
-    <button class="btn-primary" ${(!open || maxed || capped || S.coins < upCost(u)) ? 'disabled' : ''}>${maxed ? 'Maxed' : capped ? 'Needs more crow slots' : `Buy ${upCost(u)}`}</button>`;
+    <div class="info"><b>${u.n}${have ? ' (owned)' : ''}</b><span>${u.d} ${CHAIN_LEN[u.chain] > 1 ? `[${count}/${CHAIN_LEN[u.chain]} in this line]` : ''}${open ? '' : ` Requires ${UP[u.parent].n}.`}</span></div>
+    <button class="btn-primary" ${(!open || have || blocked || S.coins < u.cost) ? 'disabled' : ''}>${have ? 'Owned' : blocked ? u.needText : `Buy ${u.cost}`}</button>`;
   if (html !== lastDetail) { detailEl.innerHTML = html; lastDetail = html; } // only touch the DOM when it changed, or clicks get lost
   $('#tree-coins').textContent = Math.floor(S.coins);
 }
-$('#open-tree').onclick = () => { overlay.hidden = false; renderTree(); };
+$('#open-tree').onclick = () => {
+  overlay.hidden = false; renderTree();
+  const sc = overlay.querySelector('.tree-scroll'), n = nodeEls.quality1; // open with the first box in the middle of the view
+  if (sc && n && n.getBoundingClientRect) { const a = sc.getBoundingClientRect(), r = n.getBoundingClientRect(); sc.scrollTop += (r.top - a.top) - (a.height - r.height) / 2; sc.scrollLeft += (r.left - a.left) - (a.width - r.width) / 2; }
+};
 $('#close-tree').onclick = () => overlay.hidden = true;
 overlay.addEventListener('pointerdown', e => { if (e.target === overlay) overlay.hidden = true; });
 window.addEventListener('keydown', e => { if (e.key === 'Escape') overlay.hidden = true; });
@@ -649,7 +682,7 @@ const INFO = {
   coins: () => ({ t: 'Shinies', h: `<p>Your money. Crows bring gifts; drag each gift into the gift box on the right of the field to turn it into shinies. Spend them in Upgrades.</p>${stat('Gifts delivered', S.delivered || 0)}${stat('Gift tiers', ITEMS.map(i => i.n).join(' · '))}` }),
   food: () => {
     const frac = S.food - Math.floor(S.food), full = S.food >= D.foodMax;
-    return { t: 'Food charges', h: `<p>Grab food from the sack on the left, then drag and throw it out. Each pop uses one charge; there is no cooldown, so click as fast as you like.</p><p>Meal points: ${FOOD_TYPES.map(f => `${f.n} ${f.pts}`).join(', ')}.</p>${stat('Food', `${FOOD_TYPES[D.foodTier].n} (x${FOOD_TYPES[D.foodTier].mult} trust)`)}${stat('Charges', `${Math.floor(S.food)} / ${D.foodMax}`)}${stat('Next charge', full ? 'full' : fmtT((1 - frac) / D.regen))}${stat('Time per charge', fmtT(D.refillSec))}${stat('Pieces per pop', D.popSize)}${stat('Auto Feeder', lvl('autofeed') > 0 ? `every ${fmtT(D.autoFeedEvery)} (next ${fmtT(AUTO.t)})` : 'not bought')}<p style="margin-top:.5rem;color:var(--muted)">${FOOD_TYPES[D.foodTier + 1] ? `Next food: ${FOOD_TYPES[D.foodTier + 1].n} at Tasty Treats lv ${FOOD_TYPES[D.foodTier + 1].q}. ` : 'Best food unlocked. '}Bigger Bag adds charges, Restock refills faster, Bigger Handful throws more pieces per pop.</p>` };
+    return { t: 'Food charges', h: `<p>Grab food from the sack on the left, then drag and throw it out. Each pop uses one charge; there is no cooldown, so click as fast as you like.</p><p>Meal points: ${FOOD_TYPES.map(f => `${f.n} ${f.pts}`).join(', ')}.</p>${stat('Food', `${FOOD_TYPES[D.foodTier].n} (x${FOOD_TYPES[D.foodTier].mult} trust)`)}${stat('Charges', `${Math.floor(S.food)} / ${D.foodMax}`)}${stat('Next charge', full ? 'full' : fmtT((1 - frac) / D.regen))}${stat('Time per charge', fmtT(D.refillSec))}${stat('Pieces per pop', D.popSize)}${stat('Auto Feeder', lvl('autofeed') > 0 ? `every ${fmtT(D.autoFeedEvery)} (next ${fmtT(AUTO.t)})` : 'not bought')}<p style="margin-top:.5rem;color:var(--muted)">${FOOD_TYPES[D.foodTier + 1] ? `Next food: ${FOOD_TYPES[D.foodTier + 1].n} (buy it in Upgrades). ` : 'Best food unlocked. '}Bigger Bag adds charges, Restock refills faster, Bigger Handful throws more pieces per pop.</p>` };
   },
   crows: () => ({ t: 'Flock', h: `<p>Crows arrive when they notice food. Feed and pet them to earn trust. After enough meals a crow flies off and returns with a gift.</p>${stat('Crows', `${crows.length} / ${D.maxCrows}`)}${stat('Meal points per trip', D.mealsNeeded)}${stat('Next crow can arrive', spawnCd > 0 ? fmtT(spawnCd) : 'now')}<p style="margin-top:.5rem;color:var(--muted)">Click a crow in the Flock list for details. Nesting Spot adds room.</p>` }),
   attract: () => ({ t: 'Attraction', h: `<p>Rises each time you grab food and slowly fades. When it is high enough and there is room, a new crow may arrive.</p>${stat('Attraction', `${S.attract.toFixed(1)} / ${CFG.maxAttract}`)}${stat('Needed for a new crow', '0.5+')}${stat('Arrival cooldown', spawnCd > 0 ? fmtT(spawnCd) : 'ready')}` }),
@@ -690,12 +723,12 @@ function renderCard() {
     ${row('Meal points to trip', `${Math.floor(c.meals)} / ${D.mealsNeeded}`)}
     ${row('Belly', c.full >= d.belly ? `Full (${fmtT((c.full - d.belly + 1) / CFG.fullDecay)})` : 'Hungry')}
     ${row('Shyness', walkRange(c) >= CFG.petReach ? `backs off at ${Math.round(walkRange(c))}px, flies at ${Math.round(flyRange(c))}px` : 'lets you come close')}
-    ${row('Hand feeding', c.trust >= CFG.handTrust ? 'Eats from your hand' : `at trust ${CFG.handTrust}`)}
-    ${row('Petting', walkRange(c) >= CFG.petReach ? 'Too shy yet' : c.petBank >= 1 ? `Likes it (${Math.floor(c.petBank)} left to grow fonder)` : `Content (fonder again in ${fmtT((1 - c.petBank) * CFG.petRefill / CFG.petClicks)})`)}
+    ${row('Hand feeding', walkRange(c) < CFG.petReach ? 'Eats from your hand' : `from trust ${touchTrust(d)}`)}
+    ${row('Petting', walkRange(c) >= CFG.petReach ? `from trust ${touchTrust(d)}` : c.petBank >= 1 ? `Likes it (${Math.floor(c.petBank)} left to grow fonder)` : `Content (fonder again in ${fmtT((1 - c.petBank) * CFG.petRefill / CFG.petClicks)})`)}
     ${row('Doing', statusOf(c))}
     ${row('Gift quality', `up to ${ITEMS[cap].n}`)}
     ${row('Size', sizeWord(d))}${trait(1, 'Pace', tw.pace)}${trait(1, 'Nerve', tw.shy)}${trait(2, 'Appetite', tw.belly)}${trait(2, 'Warmth', tw.warm)}${trait(3, 'Generosity', tw.gen)}${trait(3, 'Temper', tw.temper)}
-    <div class="tip">${walkRange(c) >= CFG.petReach ? 'Shy: backs away when the cursor comes near and flies off if it gets too close. Every scare adds to its grudge. Feed it from a distance.' : walkRange(c) >= CFG.petReach * 0.6 ? 'Getting used to you. Move slowly toward it, then click to pet.' : c.trust >= CFG.handTrust ? 'Click it to pet it, or hold food low near it to feed it by hand.' : 'Click it to pet it.'}</div>`;
+    <div class="tip">${walkRange(c) >= CFG.petReach ? 'Shy: backs away when the cursor comes near and flies off if it gets too close. Every scare adds to its grudge. Feed it from a distance.' : walkRange(c) >= CFG.petReach * 0.6 ? 'Getting used to you. Move slowly toward it, then click to pet.' : 'Click it to pet it, or hold food low near it to feed it by hand.'}</div>`;
   if (html !== lastCard) { card.innerHTML = html; lastCard = html; }
 }
 $('#crow-list').addEventListener('click', e => {
@@ -751,7 +784,7 @@ function chartIncome() { // shinies earned in each of the last 30 minutes, as a 
   const vals = Array.from({ length: N }, (_, i) => { const m = now - (N - 1 - i); return m >= 0 ? (S.mins[m]?.e || 0) : 0; });
   const top = niceMax(Math.max(10, ...vals)), L = 40, B = 22, T = 10, pw = w - L - 12, ph = h - B - T;
   const px = i => L + 6 + i * (pw - 6) / (N - 1), py = v => T + ph - ph * v / top;
-  g.font = '16px VT323, monospace'; g.textAlign = 'right';
+  g.font = '19px VT323, monospace'; g.textAlign = 'right';
   for (let i = 0; i <= 2; i++) { const y = Math.round(T + ph - ph * i / 2); g.fillStyle = INK.grid; g.fillRect(L, y, pw + 6, 1); g.fillStyle = INK.muted; g.fillText(fmtNum(top * i / 2), L - 6, y); }
   g.beginPath(); g.moveTo(px(0), py(0)); vals.forEach((v, i) => g.lineTo(px(i), py(v))); g.lineTo(px(N - 1), py(0)); g.closePath(); g.fillStyle = 'rgba(255,207,90,0.14)'; g.fill(); // soft area under the line
   g.lineWidth = 2; g.lineJoin = 'round'; g.strokeStyle = INK.bar; g.beginPath(); vals.slice(0, N - 1).forEach((v, i) => i ? g.lineTo(px(i), py(v)) : g.moveTo(px(i), py(v))); g.stroke();
@@ -765,7 +798,7 @@ function chartIncome() { // shinies earned in each of the last 30 minutes, as a 
 const niceMax = v => { const p = Math.pow(10, Math.floor(Math.log10(v))); return [1, 2, 5, 10].map(m => m * p).find(x => x >= v) || v; };
 function chartTiers() { // how many gifts of each rarity you have delivered
   const rows = ITEMS.length, rh = 34, c = prepCanvas('ch-tiers', rows * rh + 4); if (!c) return; const { g, w } = c, max = Math.max(1, ...ITEMS.map((_, i) => S.tiers[i] || 0)), L = 124, R = 44, pw = w - L - R;
-  g.font = '18px VT323, monospace';
+  g.font = '21px VT323, monospace';
   ITEMS.forEach((it, i) => {
     const n = S.tiers[i] || 0, y = i * rh + 2, cy = y + rh / 2;
     if (ready('items')) g.drawImage(IMG.items, i * 16, 0, 16, 16, 2, y + 1, 32, 32);
@@ -778,7 +811,7 @@ function chartTiers() { // how many gifts of each rarity you have delivered
 }
 function chartTrust() { // bond with every crow in the flock: bar = trust, red tick = grudge, ticks mark the levels
   const list = crows, rh = 32, c = prepCanvas('ch-trust', Math.max(1, list.length) * rh + 24); if (!c) return; const { g, w } = c, L = 90, R = 40, pw = w - L - R;
-  g.font = '18px VT323, monospace';
+  g.font = '21px VT323, monospace';
   if (!list.length) { g.fillStyle = INK.muted; g.textAlign = 'left'; g.fillText('No crows yet. Throw some food.', 4, 20); return; }
   list.forEach((cr, i) => {
     const y = i * rh + 4, cy = y + rh / 2 - 2, lv = LEVELS[levelIdx(cr.trust)];
@@ -788,7 +821,7 @@ function chartTrust() { // bond with every crow in the flock: bar = trust, red t
     g.fillStyle = INK.text; g.textAlign = 'right'; g.fillText(String(Math.floor(cr.trust)), w - 4, cy);
     chartHits['ch-trust'].push({ x: 0, y, w, h: rh, tip: `${cr.name} (${cr.def.type}): ${Math.floor(cr.trust)}/100, ${lv.n}${cr.grudge > 1 ? `, grudge ${Math.floor(cr.grudge)}/${CFG.banAt}` : ''}` });
   });
-  const base = list.length * rh + 12; g.fillStyle = INK.muted; g.font = '15px VT323, monospace'; g.textAlign = 'center';
+  const base = list.length * rh + 12; g.fillStyle = INK.muted; g.font = '18px VT323, monospace'; g.textAlign = 'center';
   LEVELS.slice(1).forEach(l => { const x = L + pw * l.min / 100; g.fillStyle = INK.grid; g.fillRect(Math.round(x), 2, 1, list.length * rh); g.fillStyle = INK.muted; g.fillText(l.n, x, base + 4); });
 }
 function renderStats() {
@@ -822,7 +855,7 @@ function updateUI() {
   hudFoodIcon.style.setProperty('--i', FOOD_TYPES[D.foodTier].ui);
   $('#hud-crows').textContent = `${crows.length}/${D.maxCrows}`;
   $('#hud-attract').style.width = (S.attract / CFG.maxAttract * 100) + '%';
-  const afford = UPGRADES.some(u => unlocked(u) && lvl(u.id) < upMax(u) && S.coins >= upCost(u));
+  const afford = UPGRADES.some(canBuy);
   $('#tree-badge').hidden = !afford;
   const listHtml = crows.length ? crows.map((c, i) => {
     const lv = levelOf(c.trust), st = c.state === 'away' ? (c.trip ? 'fetching' : 'away') : c.gift ? ico(13) : `${Math.floor(c.meals)}/${D.mealsNeeded}`;
@@ -834,11 +867,16 @@ function updateUI() {
 }
 
 /* ================= DEBUG PANEL ================= */
-const DBG = { speed: 1, giftTier: 0, rosterId: 'edgar' };
+const DBG = { speed: 1, giftTier: 0, rosterId: 'edgar', tipId: 'intro', info: (() => { try { return !!JSON.parse(localStorage.getItem('cawCollector.ui') || '{}').info; } catch (e) { return false; } })() }; // info = detailed feedback (big hearts, extra tips)
 const spawnDef = d => { if (!d || crows.some(c => c.id === d.id)) return; const c = makeCrow(d); c.t = 0; crows.push(c); flyIn(c); selCrow = c; };
 const dbgTarget = () => selCrow && crows.includes(selCrow) ? selCrow : crows[0];
 const dbgCrowAction = fn => () => { const c = dbgTarget(); if (c) fn(c); else floater(W / 2, floorY - 120, 'no crow', 16); };
 const DEBUG_TOOLS = [
+  { group: 'Tutorial popups' },
+  { label: 'Show tip', select: () => ['intro', 'gift', 'scare', 'touch'].map(k => [k, k]), key: 'tipId', fn: () => showTip(DBG.tipId, true) },
+  { label: 'Reset tutorials', fn: () => { S.tips = {}; save(); } },
+  { group: 'Display' },
+  { label: 'Detailed feedback', toggle: 'info' },
   { group: 'Crows (acts on the selected crow, else the first)' },
   { label: 'Spawn random crow', fn: () => spawnDef(pickArrival()) },
   { label: 'Spawn specific crow', select: () => ROSTER.map(d => [d.id, d.name]), key: 'rosterId', fn: () => spawnDef(ROSTER_BY_ID[DBG.rosterId]) },
@@ -870,6 +908,7 @@ const DEBUG_TOOLS = [
     if (t.group) { const h = document.createElement('h4'); h.textContent = t.group; box.appendChild(h); continue; }
     const row = document.createElement('div'); row.className = 'dbg-row';
     const b = document.createElement('button'); b.className = 'btn-ghost'; b.textContent = t.label; b.onclick = t.fn; row.appendChild(b);
+    if (t.toggle) { const show = () => { b.textContent = `${t.label}: ${DBG[t.toggle] ? 'on' : 'off'}`; }; show(); b.onclick = () => { DBG[t.toggle] = !DBG[t.toggle]; show(); try { localStorage.setItem('cawCollector.ui', JSON.stringify({ info: DBG.info })); } catch (e) {} }; }
     if (t.select) {
       const sel = document.createElement('select');
       for (const [v, n] of t.select()) { const o = document.createElement('option'); o.value = v; o.textContent = n; sel.appendChild(o); }
@@ -882,6 +921,73 @@ const DEBUG_TOOLS = [
 const dbgPanel = $('#debug'), toggleDebug = () => { if (dbgPanel) dbgPanel.hidden = !dbgPanel.hidden; };
 $('#open-debug')?.addEventListener('click', toggleDebug); $('#close-debug')?.addEventListener('click', toggleDebug);
 window.addEventListener('keydown', e => { if (e.key === '`') toggleDebug(); });
+
+/* ================= TIPS: popups that explain a mechanic the first time it matters (reusable: add an entry to TIPS and call showTip / showTipLater) ================= */
+const TIPS = {
+  intro: { title: 'Welcome to Caw Collector', btn: "Let's go", html: `<p><b>Click the sack</b> to pop out some food. Crows will notice it and fly in.</p>
+    <p><b>Be patient.</b> New crows are shy, so keep your cursor away while they eat. They slowly learn to trust you.</p>
+    <p>When a crow has eaten enough, it flies off and comes back with a <b>gift</b>. Drag gifts into the <b>gift box</b> to earn shinies, then spend them on <b>Upgrades</b>.</p>` },
+  gift: { title: 'A gift!', btn: 'Got it', html: `<p>A crow brought you something.</p><p><b>Drag it into the gift box</b> to turn it into shinies. Rarer gifts are worth more.</p><p>Later you can buy an upgrade so crows drop their gifts into the box by themselves.</p>` },
+  scare: { title: 'Crows are shy', btn: 'I will be gentle', html: `<p>Come too close and a crow gets nervous. Inside the <b style="color:#fff">white circle</b> it <b>walks away</b>. Inside the <b style="color:#e0566a">red circle</b> it <b>flies off</b>, and it remembers it.</p>
+    <p>The more a crow trusts you, the <b>smaller the circles</b> get. Feed it from a distance and give it time. Once the circles are gone you can <b>pet it</b> and even <b>feed it by hand</b>.</p>` },
+  touch: { title: 'It trusts you now', btn: 'Nice', html: `<p>This crow lets you come close!</p><p><b>Click it</b> to pet it. It squishes happily, but only the first few pets make it fonder.</p><p>Hold a piece of food <b>low, right next to it</b> and it will eat from your hand for extra trust.</p>` },
+};
+let tipOpen = null; const tipQueue = [], tipTimers = [];
+const tipEl2 = $('#tip-overlay');
+function openTip(id) { const t = TIPS[id]; tipOpen = id; $('#tip-title').textContent = t.title; $('#tip-body').innerHTML = t.html; $('#tip-ok').textContent = t.btn; tipEl2.hidden = false; }
+function closeTip() { if (!tipOpen) return; tipOpen = null; tipEl2.hidden = true; const next = tipQueue.shift(); if (next) openTip(next); }
+function showTip(id, force = false) { if (!TIPS[id] || (S.tips[id] && !force)) return; S.tips[id] = true; if (tipOpen) { if (tipOpen !== id && !tipQueue.includes(id)) tipQueue.push(id); } else openTip(id); save(); }
+function showTipLater(id, sec) { if (!S.tips[id] && !tipTimers.some(x => x.id === id)) tipTimers.push({ id, t: sec }); } // after a short pause so the player sees what just happened
+$('#tip-ok')?.addEventListener('click', closeTip);
+window.addEventListener('keydown', e => { if (tipOpen && (e.key === 'Enter' || e.key === ' ' || e.key === 'Escape')) { e.preventDefault(); closeTip(); } });
+
+// ---- tip illustrations, drawn live on the popup's canvas ----
+function drawTipArt(now) {
+  if (!tipOpen) return; const c = prepCanvas('tip-art', 230); if (!c) return; const { g, w, h } = c, t = now / 1000, gy = h - 50;
+  g.fillStyle = '#243557'; g.fillRect(0, 0, w, h); g.fillStyle = '#34507a'; g.fillRect(0, gy - 60, w, 60); g.fillStyle = '#3d5a45'; g.fillRect(0, gy, w, h - gy); g.fillStyle = '#4c7a56'; g.fillRect(0, gy, w, 6);
+  const icon = (img, spr, x, y, sc) => g.drawImage(img, spr * 16, 0, 16, 16, Math.round(x - 8 * sc), Math.round(y - 8 * sc), 16 * sc, 16 * sc);
+  const crow = (x, f, S = 4, flip = false, air = false, sq = 0) => { // a default-palette crow standing at x (or flying when air)
+    g.save(); const fy = gy + 4 - (air ? 0 : 0); if (sq) { g.translate(x, fy); g.scale(1, 1 - CFG.squish * sq); g.translate(-x, -fy); }
+    if (flip) { g.translate(x * 2, 0); g.scale(-1, 1); }
+    g.drawImage(IMG.crow3, (f % 6) * 32, Math.floor(f / 6) * 32, 32, 32, Math.round(x - 16 * S), Math.round(fy - (air ? 24 : 32) * S), 32 * S, 32 * S); g.restore();
+  };
+  const txt = (s2, x, y, col = '#fff', align = 'center', size = 22) => { g.font = `${size}px VT323, monospace`; g.textAlign = align; g.textBaseline = 'middle'; g.fillStyle = '#000'; g.fillText(s2, x + 1, y + 1); g.fillStyle = col; g.fillText(s2, x, y); };
+  const cursor = (x, y, sc = 3) => { g.save(); g.translate(x, y); g.scale(sc, sc); g.beginPath(); [[0, 0], [0, 16], [4, 12], [7, 19], [10, 18], [7, 11], [12, 11]].forEach(([a, b], i) => i ? g.lineTo(a, b) : g.moveTo(a, b)); g.closePath(); g.lineWidth = 1.5; g.strokeStyle = '#000'; g.fillStyle = '#fff'; g.fill(); g.stroke(); g.restore(); };
+  if (!ready('crow3') || !ready('items')) return;
+  if (tipOpen === 'intro') { // sack -> food -> crow -> gift -> box
+    const p = (t % 5) / 5, sx = w * 0.12, cx = w * 0.5, bx = w * 0.88;
+    icon(IMG.items, 13, sx, gy - 12, 4); icon(IMG.items, 14, bx, gy - 12, 4);
+    const arc = (u, x0, x1, hgt) => [x0 + (x1 - x0) * u, gy - 40 - Math.sin(Math.PI * u) * hgt];
+    const eating = p > 0.35 && p < 0.55; crow(cx, eating ? 9 + Math.floor((p - 0.35) * 35) % 7 : 0);
+    if (p < 0.35) { const [x, y] = arc(p / 0.35, sx, cx - 40, 90); icon(IMG.items, 7, x, y, 2); }
+    if (p > 0.6 && p < 0.9) { const [x, y] = arc((p - 0.6) / 0.3, cx + 40, bx, 70); icon(IMG.items, 3, x, y, 2); }
+    if (p >= 0.9) txt('+20', bx, gy - 80 - (p - 0.9) * 120, '#ffcf5a');
+    txt('click the sack', sx, h - 18); txt('crow eats', cx, h - 18); txt('drag the gift in', bx, h - 18);
+  } else if (tipOpen === 'gift') {
+    const u = (t % 2.4) / 2.4, e = Math.min(1, u / 0.8), x = w * 0.2 + (w * 0.6) * e, y = gy - 40 - Math.sin(Math.PI * e) * 40 * (u < 0.8 ? 1 : 0);
+    icon(IMG.items, 14, w * 0.82, gy - 12, 4); crow(w * 0.12, 0);
+    if (u < 0.85) { icon(IMG.items, 4, x, y, 3); icon(IMG.ui, 9, x + 10, y - 22, 3); } else txt('+60', w * 0.82, gy - 90 - (u - 0.85) * 100, '#ffcf5a');
+    txt('drag it into the gift box', w / 2, h - 18);
+  } else if (tipOpen === 'scare') { // the cursor walks toward a crow: it backs off inside the white circle, flies off inside the red one
+    const cxp = w * 0.62, R1 = Math.min(w * 0.36, 190), R2 = R1 * 0.42, u = (t % 7) / 7, fromX = 24, toX = cxp - 6;
+    const dist = Math.max(0, cxp - (fromX + (toX - fromX) * Math.min(1, u / 0.7)));  // cursor x position follows u; crow reacts
+    const curX = fromX + (toX - fromX) * Math.min(1, u / 0.7), back = Math.min(1, Math.max(0, (R1 - dist) / (R1 - R2)));
+    g.save(); g.lineWidth = 2; g.setLineDash([8, 6]); g.strokeStyle = 'rgba(255,255,255,0.8)'; g.beginPath(); g.ellipse(cxp, gy + 2, R1, R1 * 0.3, 0, 0, 7); g.stroke();
+    g.strokeStyle = 'rgba(224,86,106,0.95)'; g.beginPath(); g.ellipse(cxp, gy + 2, R2, R2 * 0.3, 0, 0, 7); g.stroke(); g.restore();
+    const flying = dist < R2, cx2 = cxp + Math.min(1, back) * 46 * (flying ? 0 : 1), flyOff = flying ? Math.min(1, (R2 - dist) / R2 + (u > 0.7 ? (u - 0.7) * 2 : 0)) : 0;
+    if (u < 0.92) { if (flying) { g.save(); g.translate(0, -flyOff * 90); crow(cxp + 30 + flyOff * 60, 24 + Math.floor(t * 14) % 6, 4, true, true); g.restore(); } else crow(cx2, 0, 4, true); }
+    cursor(curX, gy - 24 + 4);
+    txt('walks away', cxp - R1 * 0.74, gy - 58, '#fff'); txt('flies off!', cxp, gy + 40, '#e0566a');
+    txt('the circles shrink as it trusts you', w * 0.5, 18, '#ffe9a8');
+  } else if (tipOpen === 'touch') {
+    const u = (t % 1.6) / 1.6, press = u < 0.2 ? u / 0.2 : u < 0.5 ? 1 - (u - 0.2) / 0.3 : 0, a = w * 0.3, b = w * 0.74;
+    crow(a, 4 + Math.floor(t * 6) % 2 * (press > 0.1 ? 1 : 0), 4, false, false, press);
+    icon(IMG.ui, 9, a, gy - 32 * 4 * 0.4 * (1 - 0.45 * press) - 40 - (1 - press) * 22, 3);
+    if (u > 0.2 && u < 0.9) icon(IMG.items, 12, a + 24 + (u - 0.2) * 20, gy - 130 - (u - 0.2) * 50, 2);
+    crow(b - 20, 9 + Math.floor(t * 8) % 7, 4, true); icon(IMG.ui, 9, b + 52, gy - 36, 3); icon(IMG.items, 7, b + 38, gy - 52, 2);
+    txt('click to pet', a, h - 18); txt('hold food low, next to it', b, h - 18);
+  }
+}
 
 /* ================= MAIN LOOP ================= */
 let spawnT = 2, spawnCd = 0, uiT = 0, saveT = 0, last = performance.now();
@@ -900,7 +1006,7 @@ function tick(dt) {
     spawnT = 2;
     if (spawnCd <= 0 && S.attract >= 0.5 && crows.length < D.maxCrows && Math.random() < Math.min(1, S.attract * 0.4)) {
       const d = pickArrival();
-      if (d) { const c = makeCrow(d); c.t = 0; crows.push(c); flyIn(c); S.attract -= 0.5; spawnCd = CFG.crowSpawnCd; floater(W / 2, 90, R(d.id).seen && R(d.id).visits ? `${d.name} is back!` : `${d.name} is here!`, 20); R(d.id).visits = (R(d.id).visits || 0) + 1; }
+      if (d) { const c = makeCrow(d); c.t = 0; crows.push(c); flyIn(c); S.attract -= 0.5; spawnCd = CFG.crowSpawnCd; floater(W / 2, 90, R(d.id).seen && R(d.id).visits ? `${d.name} is back!` : `${d.name} is here!`, 2, null, true); R(d.id).visits = (R(d.id).visits || 0) + 1; }
     }
   }
   // dragged body follows pointer
@@ -917,11 +1023,14 @@ function tick(dt) {
   for (const c of crows) updateCrow(c, dt);
   for (let i = crows.length - 1; i >= 0; i--) if (crows[i].gone) { if (selCrow === crows[i]) selCrow = null; crows.splice(i, 1); save(); }
   for (const f of floaters) { f.t += dt; f.y -= 30 * dt; }
+  for (const p of particles) { p.t += dt; p.x += p.vx * dt; p.y += p.vy * dt; p.vy += 260 * dt; p.vx *= 1 - 2 * dt; }
+  for (let i = particles.length - 1; i >= 0; i--) if (particles[i].t > particles[i].life) particles.splice(i, 1);
   for (let i = floaters.length - 1; i >= 0; i--) if (floaters[i].t > floaters[i].life) floaters.splice(i, 1);
 }
 function frame(now) {
   const dt = Math.min(0.05, (now - last) / 1000); last = now;
-  for (let i = 0; i < DBG.speed; i++) tick(dt); // debug game speed runs extra small steps, never bigger ones
+  if (!tipOpen) for (let i = 0; i < DBG.speed; i++) tick(dt); // debug game speed runs extra small steps, never bigger ones. A tip popup pauses the game.
+  for (let i = tipTimers.length - 1; i >= 0; i--) { tipTimers[i].t -= dt; if (tipTimers[i].t <= 0 && !tipOpen) { showTip(tipTimers[i].id); tipTimers.splice(i, 1); } }
 
   // draw
   ctx.imageSmoothingEnabled = false;
@@ -930,9 +1039,15 @@ function frame(now) {
   drawWorldObjects();
   for (const b of bodies) drawBody(b);
   for (const c of crows) drawCrow(c);
-  for (const f of floaters) { ctx.globalAlpha = Math.max(0, 1 - f.t / f.life); if (f.text) { ctx.font = `${Math.round(f.size * 1.3)}px ${PIX}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; const w = ctx.measureText(f.text).width, tx = f.spr != null ? f.x - 14 : f.x; ctx.fillStyle = '#000'; ctx.fillText(f.text, tx + 1, f.y + 1); ctx.fillStyle = '#fff'; ctx.fillText(f.text, tx, f.y); if (f.spr != null && ready('items')) drawIcon(f.spr, tx + w / 2 + 14, f.y, 1.5); }
+  for (const p of particles) { // a four-armed pixel sparkle that fades out
+    ctx.globalAlpha = Math.max(0, 1 - p.t / p.life); ctx.fillStyle = p.col; const x = Math.round(p.x), y = Math.round(p.y), a = p.sz;
+    ctx.fillRect(x - a / 2, y - a / 2, a, a); ctx.fillRect(x - a * 1.5, y - 1, a, 2); ctx.fillRect(x + a * 0.5, y - 1, a, 2); ctx.fillRect(x - 1, y - a * 1.5, 2, a); ctx.fillRect(x - 1, y + a * 0.5, 2, a);
+  }
+  ctx.globalAlpha = 1;
+  for (const f of floaters) { ctx.globalAlpha = Math.max(0, 1 - f.t / f.life); if (f.text) { ctx.font = `${Math.round(f.size * 1.65)}px ${PIX}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; const w = ctx.measureText(f.text).width, tx = f.spr != null ? f.x - 14 : f.x; ctx.fillStyle = '#000'; ctx.fillText(f.text, tx + 1, f.y + 1); ctx.fillStyle = '#fff'; ctx.fillText(f.text, tx, f.y); if (f.spr != null && ready('items')) drawIcon(f.spr, tx + w / 2 + 14, f.y, 1.5); }
     else if (f.spr != null && ready('items')) drawIcon(f.spr, f.x, f.y); }
   ctx.globalAlpha = 1;
+  drawTipArt(now);
 
   uiT -= dt; if (uiT <= 0) { uiT = 0.2; updateUI(); }
   saveT -= dt; if (saveT <= 0) { saveT = 5; save(); }
@@ -940,7 +1055,8 @@ function frame(now) {
 }
 
 buildTree(); renderTree(); resize();
+showTipLater('intro', 0.4);
 for (const c of crows) { flyIn(c); c.t = 0; }
-window.__caw = { S, D, crows, bodies, CFG, ROSTER, R, pickArrival, scare, BAG, CRATE, P, UPGRADES, buy, upCost, unlocked, lvl, floorY: () => floorY, W: () => W };
+window.__caw = { S, D, crows, bodies, CFG, ROSTER, R, pickArrival, scare, sparkle, particles, BAG, CRATE, P, UPGRADES, CHAIN_IDS: Object.keys(CHAIN_LEN), buy, canBuy, owned, walkRange, unlocked, lvl, floorY: () => floorY, W: () => W };
 requestAnimationFrame(frame);
 })();

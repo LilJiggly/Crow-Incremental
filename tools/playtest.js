@@ -19,7 +19,7 @@ canvas.setPointerCapture = () => {};
 canvas.getBoundingClientRect = () => ({ width: 480, height: 530, left: 0, top: 0 });
 canvas.getContext = () => stub();
 const elems = {};
-const store = {};
+const store = { 'cawCollector.v1': JSON.stringify({ tips: { intro: true, gift: true, scare: true, touch: true } }) }; // tutorials off for the simulation
 let rafCb = null, NOW = 0;
 const sandbox = {
   document: { querySelector: s => s === '#scene' ? canvas : (elems[s] ??= stub()), querySelectorAll: () => [], addEventListener() {}, createElement: () => stub(), createElementNS: () => stub(), documentElement: stub(), body: stub() },
@@ -37,7 +37,7 @@ const ev = (type, x, y) => canvasHandlers[type]({ clientX: x, clientY: y, pointe
 
 // ---------- bot ----------
 const DT = 0.05; let t = 0, queue = [], busyUntil = 0;
-const log = { firstCrow: null, firstMeal: null, firstTrip: null, firstDeposit: null, ups: [], tiers: {}, snaps: [], spooks: 0 };
+const log = { firstPet: null, firstCrow: null, firstMeal: null, firstTrip: null, firstDeposit: null, ups: [], tiers: {}, snaps: [], spooks: 0 };
 const at = (delay, fn) => queue.push([t + delay, fn]);
 const reaction = () => SKILL === 'good' ? 0.3 : 2 + rng() * 3;
 const floorY = () => G.floorY(), W = () => G.W();
@@ -51,6 +51,7 @@ function feed(crow) { // clicking the sack pops the food out; a polite player th
   busyUntil = t + 0.8 + reaction();
 }
 function pet(crow) { // click the crow a few times, then move the cursor away
+  if (log.firstPet == null) log.firstPet = t;
   for (let i = 0; i < 3; i++) at(i * 0.45, () => { if (G.P.grab) return; ev('pointerdown', crow.x, crow.y - 6); ev('pointerup', crow.x, crow.y - 6); });
   away(1.5);
   busyUntil = t + 1.8 + reaction();
@@ -68,8 +69,8 @@ function deliver(item) {
 function botThink() {
   const crows = G.crows, bodies = G.bodies, S = G.S;
   // 1. buy the cheapest affordable upgrade
-  const aff = G.UPGRADES.filter(u => G.unlocked(u) && G.lvl(u.id) < u.max && S.coins >= G.upCost(u)).sort((a, b) => G.upCost(a) - G.upCost(b));
-  if (aff.length) { G.buy(aff[0].id); log.ups.push([+(t / 60).toFixed(1), aff[0].id, G.lvl(aff[0].id)]); }
+  const aff = G.UPGRADES.filter(G.canBuy).sort((a, b) => a.cost - b.cost);
+  if (aff.length) { G.buy(aff[0].id); log.ups.push([+(t / 60).toFixed(1), aff[0].id, ""]); }
   // 2. deliver loose gifts
   const gift = bodies.find(b => b.kind === 'item' && !b.grab);
   if (gift) return deliver(gift);
@@ -78,7 +79,7 @@ function botThink() {
   const foodOut = bodies.filter(b => b.kind === 'food').length;
   if (G.S.food >= 1 && ((crows.length === 0 && foodOut < 4) || (foodOut < 2 && hungry.length) || (foodOut === 0 && crows.length < G.D.maxCrows))) return feed(hungry[0]);
   // 4. pet a crow that is ready
-  const petable = crows.filter(c => (c.state === 'idle' || c.state === 'eat') && c.trust >= 18 && c.petBank >= 1);
+  const petable = crows.filter(c => (c.state === 'idle' || c.state === 'eat') && G.walkRange(c) < G.CFG.petReach && c.petBank >= 1);
   if (petable.length) return pet(petable[0]);
 }
 
@@ -95,11 +96,11 @@ while (t < END) {
   if (log.firstTrip == null && S.trips > 0) log.firstTrip = t;
   if (log.firstDeposit == null && S.delivered > 0) log.firstDeposit = t;
   if (SNAP.includes(Math.round(t))) {
-    if (!log.snaps.some(s => s.min === Math.round(t) / 60)) log.snaps.push({ min: Math.round(t) / 60, coins: Math.floor(S.coins), delivered: S.delivered, trips: S.trips, crows: cs.length, trust: cs.map(c => Math.floor(c.trust)).join(','), mealsNeeded: G.D.mealsNeeded, ups: Object.entries(S.up).map(([k, v]) => k + v).join(' ') });
+    if (!log.snaps.some(s => s.min === Math.round(t) / 60)) log.snaps.push({ min: Math.round(t) / 60, coins: Math.floor(S.coins), delivered: S.delivered, trips: S.trips, crows: cs.length, trust: cs.map(c => Math.floor(c.trust)).join(','), mealsNeeded: G.D.mealsNeeded, ups: G.CHAIN_IDS.filter(k => G.lvl(k)).map(k => k + G.lvl(k)).join(' ') });
   }
 }
 const fm = x => x == null ? 'never' : (x / 60).toFixed(1) + ' min';
-console.log(`SKILL=${SKILL} seed=${SEED}  first crow ${fm(log.firstCrow)} | first meal ${fm(log.firstMeal)} | first trip ${fm(log.firstTrip)} | first deposit ${fm(log.firstDeposit)}`);
+console.log(`SKILL=${SKILL} seed=${SEED}  first pet ${fm(log.firstPet)} | first crow ${fm(log.firstCrow)} | first meal ${fm(log.firstMeal)} | first trip ${fm(log.firstTrip)} | first deposit ${fm(log.firstDeposit)}`);
 console.log('gift tiers delivered:', JSON.stringify(log.tiers));
 console.log('upgrades:', log.ups.map(u => `${u[0]}m:${u[1]}${u[2]}`).join(' '));
 for (const s of log.snaps) console.log(JSON.stringify(s));
